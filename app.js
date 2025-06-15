@@ -138,11 +138,17 @@ const GITHUB_CONFIG = {
 };
 
 // Feedback functionality with GitHub Issues integration
-async function submitFeedback(word) {
-    const name = document.getElementById(`feedback-name-${word}`).value.trim();
-    const email = document.getElementById(`feedback-email-${word}`).value.trim();
-    const rating = document.getElementById(`rating-input-${word}`).value || 0;
-    const comments = document.getElementById(`feedback-comments-${word}`).value.trim();
+async function submitFeedback(word, isInline = false) {
+    // Determine the correct IDs based on whether it's inline or not
+    const nameId = isInline ? `inline-feedback-name-${word}` : `feedback-name-${word}`;
+    const emailId = isInline ? `inline-feedback-email-${word}` : `feedback-email-${word}`;
+    const ratingInputId = isInline ? `inline-rating-input-${word}` : `rating-input-${word}`;
+    const commentsId = isInline ? `inline-feedback-comments-${word}` : `feedback-comments-${word}`;
+    
+    const name = document.getElementById(nameId).value.trim();
+    const email = document.getElementById(emailId).value.trim();
+    const rating = document.getElementById(ratingInputId).value || 0;
+    const comments = document.getElementById(commentsId).value.trim();
     
     if (!name || !email || rating === 0) {
         alert('Please fill in all required fields and provide a rating.');
@@ -159,7 +165,8 @@ async function submitFeedback(word) {
     };
     
     // Show loading state
-    const submitBtn = document.querySelector(`#feedback-form-${word} .feedback-submit`);
+    const formId = isInline ? `inline-feedback-form-${word}` : `feedback-form-${word}`;
+    const submitBtn = document.querySelector(`#${formId} .feedback-submit`);
     const originalText = submitBtn.textContent;
     submitBtn.textContent = 'Opening GitHub...';
     submitBtn.disabled = true;
@@ -172,7 +179,8 @@ async function submitFeedback(word) {
         saveFeedbackLocally(word, feedback);
         
         // Show success message
-        const successMsg = document.getElementById(`feedback-success-${word}`);
+        const successId = isInline ? `inline-feedback-success-${word}` : `feedback-success-${word}`;
+        const successMsg = document.getElementById(successId);
         successMsg.style.display = 'block';
         successMsg.innerHTML = `
             <div>GitHub issue page opened!</div>
@@ -182,9 +190,16 @@ async function submitFeedback(word) {
         `;
         
         // Disable form
-        const form = document.getElementById(`feedback-form-${word}`);
+        const form = document.getElementById(formId);
         const inputs = form.querySelectorAll('input, textarea, button');
         inputs.forEach(input => input.disabled = true);
+        
+        // If it's an inline form, refresh the dashboard to show the new feedback
+        if (isInline && window.globe) {
+            setTimeout(() => {
+                window.globe.showDashboard(word);
+            }, 1000);
+        }
         
     } catch (error) {
         console.error('Error opening GitHub issue page:', error);
@@ -192,7 +207,7 @@ async function submitFeedback(word) {
         // Fallback to localStorage only
         saveFeedbackLocally(word, feedback);
         
-        const successMsg = document.getElementById(`feedback-success-${word}`);
+        const successMsg = document.getElementById(successId);
         successMsg.style.display = 'block';
         successMsg.innerHTML = `
             <div style="color: #ff9800;">Feedback saved locally</div>
@@ -390,9 +405,13 @@ function loadFeedbackLocally(word) {
     return JSON.parse(localStorage.getItem(key) || '[]');
 }
 
-function setRating(word, rating) {
+function setRating(word, rating, isInline = false) {
+    // Determine the correct IDs based on whether it's inline or not
+    const ratingId = isInline ? `inline-rating-${word}` : `rating-${word}`;
+    const ratingInputId = isInline ? `inline-rating-input-${word}` : `rating-input-${word}`;
+    
     // Update visual stars
-    const stars = document.querySelectorAll(`#rating-${word} .rating-star`);
+    const stars = document.querySelectorAll(`#${ratingId} .rating-star`);
     stars.forEach((star, index) => {
         if (index < rating) {
             star.classList.add('active');
@@ -402,7 +421,10 @@ function setRating(word, rating) {
     });
     
     // Update hidden input
-    document.getElementById(`rating-input-${word}`).value = rating;
+    const hiddenInput = document.getElementById(ratingInputId);
+    if (hiddenInput) {
+        hiddenInput.value = rating;
+    }
 }
 
 // Security functions
@@ -435,8 +457,41 @@ function sanitizeFeedback(feedback) {
     };
 }
 
+// New feedback management functions
+function showAddFeedbackForm(word) {
+    const formContainer = document.getElementById(`add-feedback-form-${word}`);
+    if (formContainer) {
+        formContainer.style.display = formContainer.style.display === 'none' ? 'block' : 'none';
+    }
+}
+
+function deleteFeedback(word, feedbackIndex) {
+    if (!confirm('Are you sure you want to delete this feedback?')) {
+        return;
+    }
+    
+    // Load current feedback
+    const key = `feedback_${word}`;
+    let existingFeedback = JSON.parse(localStorage.getItem(key) || '[]');
+    
+    // Remove the feedback at the specified index
+    if (feedbackIndex >= 0 && feedbackIndex < existingFeedback.length) {
+        existingFeedback.splice(feedbackIndex, 1);
+        
+        // Save back to localStorage
+        localStorage.setItem(key, JSON.stringify(existingFeedback));
+        
+        // Refresh the dashboard to show updated feedback
+        if (window.globe) {
+            window.globe.showDashboard(word);
+        }
+    }
+}
+
 window.submitFeedback = submitFeedback;
 window.setRating = setRating;
+window.showAddFeedbackForm = showAddFeedbackForm;
+window.deleteFeedback = deleteFeedback;
 
 // Search functionality
 let searchResults = [];
@@ -1116,7 +1171,7 @@ class WordGlobe {
             
             <div class="feedback-card">
                 <div class="card-title">💬 Share Your Feedback</div>
-                ${hasSubmittedFeedback ? this.renderExistingFeedback(existingFeedback) : this.renderFeedbackForm(word)}
+                ${hasSubmittedFeedback ? this.renderExistingFeedback(existingFeedback, word) : this.renderFeedbackForm(word)}
             </div>
         `;
         
@@ -1134,34 +1189,42 @@ class WordGlobe {
         return JSON.parse(localStorage.getItem(key) || '[]');
     }
     
-    renderFeedbackForm(word) {
+    renderFeedbackForm(word, isInline = false) {
+        const formId = isInline ? `inline-feedback-form-${word}` : `feedback-form-${word}`;
+        const nameId = isInline ? `inline-feedback-name-${word}` : `feedback-name-${word}`;
+        const emailId = isInline ? `inline-feedback-email-${word}` : `feedback-email-${word}`;
+        const ratingId = isInline ? `inline-rating-${word}` : `rating-${word}`;
+        const ratingInputId = isInline ? `inline-rating-input-${word}` : `rating-input-${word}`;
+        const commentsId = isInline ? `inline-feedback-comments-${word}` : `feedback-comments-${word}`;
+        const successId = isInline ? `inline-feedback-success-${word}` : `feedback-success-${word}`;
+        
         return `
-            <form id="feedback-form-${word}" class="feedback-form">
+            <form id="${formId}" class="feedback-form">
                 <input 
                     type="text" 
-                    id="feedback-name-${word}" 
+                    id="${nameId}" 
                     placeholder="Your Name *" 
                     class="feedback-input"
                     required
                 />
                 <input 
                     type="email" 
-                    id="feedback-email-${word}" 
+                    id="${emailId}" 
                     placeholder="Your Email *" 
                     class="feedback-input"
                     required
                 />
                 <div class="rating-container">
                     <span>Rating: </span>
-                    <div id="rating-${word}" class="rating-stars">
+                    <div id="${ratingId}" class="rating-stars">
                         ${[1,2,3,4,5].map(star => 
-                            `<span class="rating-star" data-rating="${star}" data-word="${word}">★</span>`
+                            `<span class="rating-star" data-rating="${star}" data-word="${word}" data-inline="${isInline}">★</span>`
                         ).join('')}
                     </div>
-                    <input type="hidden" id="rating-input-${word}" name="rating-${word}" value="0" />
+                    <input type="hidden" id="${ratingInputId}" name="rating-${word}" value="0" />
                 </div>
                 <textarea 
-                    id="feedback-comments-${word}" 
+                    id="${commentsId}" 
                     placeholder="Additional comments or suggestions..." 
                     class="feedback-textarea"
                 ></textarea>
@@ -1170,6 +1233,7 @@ class WordGlobe {
                         type="button" 
                         class="feedback-submit"
                         data-word="${word}"
+                        data-inline="${isInline}"
                         style="flex: 1;"
                     >
                         📝 Open GitHub Issue Form
@@ -1186,14 +1250,23 @@ class WordGlobe {
                 <div style="font-size: 11px; color: #aaa; margin-top: 8px; text-align: center;">
                     Your feedback will be shared with the team via GitHub Issues
                 </div>
-                <div id="feedback-success-${word}" class="feedback-success" style="display: none;"></div>
+                <div id="${successId}" class="feedback-success" style="display: none;"></div>
             </form>
         `;
     }
     
-    renderExistingFeedback(feedbackList) {
+    renderExistingFeedback(feedbackList, word) {
         if (feedbackList.length === 0) {
-            return '<div class="card-content">No feedback available yet.</div>';
+            return `
+                <div class="card-content">
+                    <div class="feedback-header">
+                        <span>No feedback available yet.</span>
+                        <button class="feedback-btn feedback-add-new" data-word="${word}" data-action="add-new">
+                            Add Feedback
+                        </button>
+                    </div>
+                </div>
+            `;
         }
         
         // Show all team feedback, not just the latest
@@ -1201,12 +1274,20 @@ class WordGlobe {
             const sanitizedFeedback = sanitizeFeedback(feedback);
             const stars = '★'.repeat(sanitizedFeedback.rating) + '☆'.repeat(5 - sanitizedFeedback.rating);
             const isFromGitHub = sanitizedFeedback.githubUrl;
+            const canDelete = !isFromGitHub; // Only allow deleting local feedback
             
             return `
-                <div style="border-bottom: 1px solid rgba(255,255,255,0.1); padding: 15px 0; ${index === feedbackList.length - 1 ? 'border-bottom: none;' : ''}">
+                <div style="border-bottom: 1px solid rgba(255,255,255,0.1); padding: 15px 0; ${index === feedbackList.length - 1 ? 'border-bottom: none;' : ''}" data-feedback-index="${index}">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                         <strong style="color: #64b5f6;">${sanitizedFeedback.name}</strong>
-                        <span style="color: #ffd700; font-size: 16px;">${stars}</span>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span style="color: #ffd700; font-size: 16px;">${stars}</span>
+                            ${canDelete ? `
+                                <button class="feedback-btn feedback-delete" data-word="${word}" data-feedback-index="${index}" data-action="delete">
+                                    Delete
+                                </button>
+                            ` : ''}
+                        </div>
                     </div>
                     ${sanitizedFeedback.comments ? `
                         <div style="margin: 8px 0; font-style: italic; color: #e0e0e0;">
@@ -1227,14 +1308,24 @@ class WordGlobe {
         
         return `
             <div class="card-content">
-                <p><strong>Team Feedback (${feedbackList.length})</strong></p>
-                ${feedbackHTML}
+                <div class="feedback-header">
+                    <strong>Team Feedback (${feedbackList.length})</strong>
+                    <button class="feedback-btn feedback-add-new" data-word="${word}" data-action="add-new">
+                        Add Feedback
+                    </button>
+                </div>
+                <div id="feedback-list-${word}">
+                    ${feedbackHTML}
+                </div>
                 <div style="text-align: center; margin-top: 15px;">
                     <a href="https://github.com/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/issues?labels=feedback" 
                        target="_blank" 
                        style="color: #64b5f6; font-size: 12px; text-decoration: none;">
                        View all feedback on GitHub →
                     </a>
+                </div>
+                <div id="add-feedback-form-${word}" style="display: none; margin-top: 15px;">
+                    ${this.renderFeedbackForm(word, true)}
                 </div>
             </div>
         `;
@@ -1380,8 +1471,9 @@ function setupDynamicEventListeners() {
         if (e.target.classList.contains('rating-star')) {
             const rating = parseInt(e.target.dataset.rating);
             const word = e.target.dataset.word;
+            const isInline = e.target.dataset.inline === 'true';
             if (rating && word) {
-                setRating(word, rating);
+                setRating(word, rating, isInline);
             }
         }
     });
@@ -1390,7 +1482,25 @@ function setupDynamicEventListeners() {
     document.addEventListener('click', (e) => {
         if (e.target.classList.contains('feedback-submit') && e.target.dataset.word) {
             const word = e.target.dataset.word;
-            submitFeedback(word);
+            const isInline = e.target.dataset.inline === 'true';
+            submitFeedback(word, isInline);
+        }
+    });
+    
+    // Feedback management button clicks
+    document.addEventListener('click', (e) => {
+        if (e.target.classList.contains('feedback-btn')) {
+            const word = e.target.dataset.word;
+            const action = e.target.dataset.action;
+            
+            if (action === 'add-new' && word) {
+                showAddFeedbackForm(word);
+            } else if (action === 'delete' && word) {
+                const feedbackIndex = parseInt(e.target.dataset.feedbackIndex);
+                if (!isNaN(feedbackIndex)) {
+                    deleteFeedback(word, feedbackIndex);
+                }
+            }
         }
     });
 }
